@@ -1,0 +1,7 @@
+_csv/
+_images/
+**/*.keras
+.idea
+**/__pycache__
+**/*.csv
+**/.DS_Store
