@@ -13,6 +13,24 @@ ulimit -n 65535 || true
 JOBS="$(mktemp -t s5jobs.XXXXXX)"
 LOG="$(mktemp -t s5log.XXXXXX)"
 
+# --- Preflight Check ---
+echo "Checking connectivity to $ENDPOINT ..."
+MAX_RETRIES=5
+for attempt in $(seq 1 $MAX_RETRIES); do
+    if s5cmd --endpoint-url="$ENDPOINT" ls "s3://$BUCKET/" >/dev/null 2>&1; then
+        echo "✅ Connection successful (attempt $attempt)"
+        break
+    else
+        echo "⚠️  Preflight check failed (attempt $attempt/$MAX_RETRIES), retrying in 5s..."
+        sleep 5
+    fi
+    if [[ "$attempt" -eq "$MAX_RETRIES" ]]; then
+        echo "❌ Could not connect to $ENDPOINT after $MAX_RETRIES attempts. Exiting."
+        exit 1
+    fi
+done
+
+# --- Build job list ---
 find "$SRC" -type f ! -name '.DS_Store' -print0 |
 while IFS= read -r -d '' f; do
     rel="${f#"$SRC"/}"
@@ -25,22 +43,22 @@ echo "Source: $SRC"
 echo "Destination: s3://$BUCKET/$DEST_PREFIX/"
 echo "Total files: $TOTAL_FILES"
 
-# Progress monitor in the background
+# --- Progress Monitor ---
 (
     while kill -0 "$$" 2>/dev/null; do
         UPLOADED=$(grep -c '^cp ' "$LOG" 2>/dev/null || true)
         PERCENT=$(( 100 * UPLOADED / TOTAL_FILES ))
         echo -ne "Progress: $UPLOADED / $TOTAL_FILES files (${PERCENT}%)\r"
-        sleep 1
+        sleep 2
     done
 ) &
 PROGRESS_PID=$!
 
-# Run s5cmd, filter output, and log successes for the progress counter
+# --- Upload with s5cmd ---
 s5cmd --endpoint-url="$ENDPOINT" run "$JOBS" 2>&1 \
     | tee /dev/tty \
     | grep '^cp ' >> "$LOG" || true
 
-# Cleanup
+# --- Cleanup ---
 kill "$PROGRESS_PID" 2>/dev/null || true
-echo -e "\nUpload complete for $DATASET."
+echo -e "\n✅ Upload complete for $DATASET."
